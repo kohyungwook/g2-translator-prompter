@@ -110,35 +110,24 @@
     }
 
     async function fetchGemini(promptText, apiKey) {
-      // 신규 키 규격에 맞춘 2.5/2.0 flash 모델 호출
-      const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
-      let lastErr = '';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }]
+        })
+      });
 
-      for (const model of models) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: promptText }] }]
-            })
-          });
-
-          if (res.ok) {
-            return await res.json();
-          } else {
-            const errJson = await res.json().catch(() => ({}));
-            lastErr = errJson.error?.message || `HTTP ${res.status}`;
-          }
-        } catch (e) {
-          lastErr = e.message;
-        }
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
       }
-      throw new Error(lastErr);
+
+      return await res.json();
     }
 
     async function processTranslation(text, sourceMode, targetLangName) {
