@@ -1,0 +1,12 @@
+{
+  "name": "g2-translator-prompter",
+  "version": "1.0.0",
+  "description": "실시간 다국어 번역 및 한글 발음 프롬프터",
+  "main": "index.html",
+  "scripts": {
+    "build": "echo 'ready'"
+  },
+  "keywords": ["even-realities", "g2"],
+  "author": "User",
+  "license": "MIT"
+}
