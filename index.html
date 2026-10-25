@@ -32,7 +32,7 @@
       <span id="stt-badge" class="badge">음성 대기</span>
     </div>
     <label for="gemini-key">Gemini API Key</label>
-    <input type="password" id="gemini-key" placeholder="AI Studio에서 발급받은 API 키 입력" />
+    <input type="password" id="gemini-key" placeholder="AI Studio API 키 입력" />
     
     <label for="lang-select">대화 상대방 언어 선택</label>
     <select id="lang-select">
@@ -109,19 +109,23 @@
       }
     }
 
-    async function fetchGeminiWithFallback(promptText, apiKey) {
-      // 404 방지를 위해 공식 지원 엔드포인트를 순차적으로 자동 시도
-      const endpoints = [
-        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${apiKey}`
+    async function fetchGemini(promptText, apiKey) {
+      // 최신 API 키는 x-goog-api-key 헤더와 v1beta의 정규 모델명을 사용할 때 안정적으로 통신됩니다.
+      const candidateUrls = [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
       ];
 
-      for (const url of endpoints) {
+      let lastError = null;
+      for (const url of candidateUrls) {
         try {
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey // Header 방식으로 키 전달
+            },
             body: JSON.stringify({
               contents: [{ parts: [{ text: promptText }] }]
             })
@@ -129,12 +133,15 @@
 
           if (res.ok) {
             return await res.json();
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            lastError = errJson.error?.message || `HTTP ${res.status}`;
           }
         } catch (e) {
-          // 다음 엔드포인트 시도
+          lastError = e.message;
         }
       }
-      throw new Error("Gemini API 모델 연결 실패. 구글 콘솔의 API 활성화 상태를 확인하세요.");
+      throw new Error(lastError || "API 연결 실패");
     }
 
     async function processTranslation(text, sourceMode, targetLangName) {
@@ -158,13 +165,13 @@
       }
 
       try {
-        const data = await fetchGeminiWithFallback(promptText, apiKey);
-        let rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawJson) throw new Error("응답 본문이 비어 있습니다.");
+        const data = await fetchGemini(promptText, apiKey);
+        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) throw new Error("AI 응답 본문이 비어 있습니다.");
 
-        // 코드블록(```json ... ```) 제거 처리
-        rawJson = rawJson.replace(/```json/g, '').replace(/```/g, '').trim();
-        const res = JSON.parse(rawJson);
+        // 마크다운 백틱 정제
+        rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const res = JSON.parse(rawText);
 
         if (sourceMode === 'partner') {
           const body = `상대: "${text}"\n뜻: ${res.translation}\n추천: ${res.recommended_foreign}`;
@@ -176,9 +183,9 @@
           statusMsg.innerText = `[번역 완료] 한글 발음을 보며 소리 내어 말하세요!`;
         }
       } catch (e) {
-        console.error('번역 에러:', e);
+        console.error('번역 처리 에러:', e);
         statusMsg.className = 'status-text error-text';
-        statusMsg.innerText = `오류 발생: ${e.message}`;
+        statusMsg.innerText = `오류: ${e.message}`;
       }
     }
 
