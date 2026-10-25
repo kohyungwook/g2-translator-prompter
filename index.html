@@ -109,28 +109,104 @@
       }
     }
 
-    async function callGeminiApi(promptText, apiKey) {
-      // 404 방지를 위해 표준 모델명 순차 시도
-      const modelCandidates = [
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash"
-      ];
+    async function processTranslation(text, sourceMode, targetLangName) {
+      const apiKey = document.getElementById('gemini-key').value.trim();
+      const statusMsg = document.getElementById('status-msg');
+      statusMsg.className = 'status-text';
 
-      for (const model of modelCandidates) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: promptText }] }],
-              generationConfig: { responseMimeType: "application/json" }
-            })
-          });
+      if (!apiKey) {
+        statusMsg.className = 'status-text error-text';
+        statusMsg.innerText = '상단에 Gemini API Key를 입력해주세요.';
+        return;
+      }
 
-          if (res.ok) {
-            return await res.json();
-          }
-        } catch (err) {
-          console.warn(
+      statusMsg.innerText = 'AI 분석 중...';
+
+      let promptText = "";
+      if (sourceMode === 'partner') {
+        promptText = `당신은 스마트글래스 통역기입니다. 상대방이 [${targetLangName}]로 다음과 같이 말했습니다: "${text}". 다음 JSON으로만 답변하세요: {"translation": "한국어 번역", "recommended_foreign": "추천 외국어 답변", "recommended_korean_pron": "추천 답변의 자연스러운 한글 발음(독음)"}`;
+      } else {
+        promptText = `당신은 실시간 회화 프롬프터입니다. 내가 한국어로 말했습니다: "${text}". 이것을 [${targetLangName}]로 번역하고 한국인이 그대로 소리내어 읽을 수 있는 한글 발음(독음)을 적어주세요. 다음 JSON으로만 답변하세요: {"foreign_text": "외국어 번역 문장", "korean_pron": "한국인이 읽을 수 있는 한글 발음"}`;
+      }
+
+      try {
+        // 공식 표준 gemini-1.5-flash 모델 엔드포인트
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { responseMimeType: "application/json" }
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawJson) throw new Error("AI 응답을 생성하지 못했습니다.");
+
+        const res = JSON.parse(rawJson);
+
+        if (sourceMode === 'partner') {
+          const body = `상대: "${text}"\n뜻: ${res.translation}\n추천: ${res.recommended_foreign}`;
+          renderToGlasses(`${targetLangName} 청취`, body, res.recommended_korean_pron);
+          statusMsg.innerText = `[청취 완료] 추천 응답이 표시되었습니다.`;
+        } else {
+          const body = `내 말: "${text}"\n${targetLangName}: ${res.foreign_text}`;
+          renderToGlasses(`답변 가이드 (${targetLangName})`, body, res.korean_pron);
+          statusMsg.innerText = `[번역 완료] 한글 발음을 보며 소리 내어 말하세요!`;
+        }
+      } catch (e) {
+        console.error('번역 에러:', e);
+        statusMsg.className = 'status-text error-text';
+        statusMsg.innerText = `오류 발생: ${e.message}`;
+      }
+    }
+
+    function startListening(mode) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert('Chrome 브라우저에서 실행해주세요.');
+        return;
+      }
+
+      if (recognition) recognition.abort();
+
+      recognition = new SpeechRecognition();
+      const langSelect = document.getElementById('lang-select');
+      const targetLangName = langSelect.options[langSelect.selectedIndex].getAttribute('data-name');
+      recognition.lang = (mode === 'partner') ? langSelect.value : 'ko-KR';
+
+      const statusMsg = document.getElementById('status-msg');
+      recognition.onstart = () => { statusMsg.innerText = '음성을 듣고 있습니다... 말씀하세요!'; };
+      recognition.onresult = (e) => {
+        const spoken = e.results[0][0].transcript;
+        statusMsg.innerText = `인식됨: "${spoken}"`;
+        processTranslation(spoken, mode, targetLangName);
+      };
+      recognition.onerror = () => { statusMsg.innerText = '음성이 인식되지 않았습니다. 다시 눌러주세요.'; };
+      recognition.start();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initEvenBridge();
+
+      const savedKey = localStorage.getItem('g2_gemini_api_key');
+      const keyInput = document.getElementById('gemini-key');
+      if (savedKey) keyInput.value = savedKey;
+
+      keyInput.addEventListener('change', () => {
+        localStorage.setItem('g2_gemini_api_key', keyInput.value.trim());
+      });
+
+      document.getElementById('btn-partner-listen').addEventListener('click', () => startListening('partner'));
+      document.getElementById('btn-me-speak').addEventListener('click', () => startListening('me'));
+    });
+  </script>
+</body>
+</html>
