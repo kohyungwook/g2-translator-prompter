@@ -1,0 +1,30 @@
+name: Build EHPK Package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Create Default Icon
+        run: |
+          echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > icon.png
+
+      - name: Build EHPK Package
+        run: |
+          zip -r package.ehpk index.html evenhub.json icon.png
+
+      - name: Upload EHPK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: g2-translator-ehpk
+          path: package.ehpk
