@@ -110,21 +110,18 @@
     }
 
     async function fetchGemini(promptText, apiKey) {
-      // 최신 API 키는 x-goog-api-key 헤더와 v1beta의 정규 모델명을 사용할 때 안정적으로 통신됩니다.
-      const candidateUrls = [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
-      ];
+      // 신규 키 규격에 맞춘 2.5/2.0 flash 모델 호출
+      const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+      let lastErr = '';
 
-      let lastError = null;
-      for (const url of candidateUrls) {
+      for (const model of models) {
         try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
           const res = await fetch(url, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey // Header 방식으로 키 전달
+              'x-goog-api-key': apiKey
             },
             body: JSON.stringify({
               contents: [{ parts: [{ text: promptText }] }]
@@ -135,13 +132,13 @@
             return await res.json();
           } else {
             const errJson = await res.json().catch(() => ({}));
-            lastError = errJson.error?.message || `HTTP ${res.status}`;
+            lastErr = errJson.error?.message || `HTTP ${res.status}`;
           }
         } catch (e) {
-          lastError = e.message;
+          lastErr = e.message;
         }
       }
-      throw new Error(lastError || "API 연결 실패");
+      throw new Error(lastErr);
     }
 
     async function processTranslation(text, sourceMode, targetLangName) {
@@ -169,7 +166,6 @@
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!rawText) throw new Error("AI 응답 본문이 비어 있습니다.");
 
-        // 마크다운 백틱 정제
         rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const res = JSON.parse(rawText);
 
