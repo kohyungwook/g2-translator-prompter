@@ -109,6 +109,34 @@
       }
     }
 
+    async function fetchGeminiWithFallback(promptText, apiKey) {
+      // 404 방지를 위해 공식 지원 엔드포인트를 순차적으로 자동 시도
+      const endpoints = [
+        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${apiKey}`
+      ];
+
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }]
+            })
+          });
+
+          if (res.ok) {
+            return await res.json();
+          }
+        } catch (e) {
+          // 다음 엔드포인트 시도
+        }
+      }
+      throw new Error("Gemini API 모델 연결 실패. 구글 콘솔의 API 활성화 상태를 확인하세요.");
+    }
+
     async function processTranslation(text, sourceMode, targetLangName) {
       const apiKey = document.getElementById('gemini-key').value.trim();
       const statusMsg = document.getElementById('status-msg');
@@ -124,32 +152,18 @@
 
       let promptText = "";
       if (sourceMode === 'partner') {
-        promptText = `당신은 스마트글래스 통역기입니다. 상대방이 [${targetLangName}]로 다음과 같이 말했습니다: "${text}". 다음 JSON으로만 답변하세요: {"translation": "한국어 번역", "recommended_foreign": "추천 외국어 답변", "recommended_korean_pron": "추천 답변의 자연스러운 한글 발음(독음)"}`;
+        promptText = `당신은 스마트글래스 통역기입니다. 상대방이 [${targetLangName}]로 다음과 같이 말했습니다: "${text}". 백틱이나 마크다운 없이 순수 JSON 텍스트로만 응답하세요: {"translation": "한국어 번역", "recommended_foreign": "추천 외국어 답변", "recommended_korean_pron": "추천 답변의 자연스러운 한글 발음(독음)"}`;
       } else {
-        promptText = `당신은 실시간 회화 프롬프터입니다. 내가 한국어로 말했습니다: "${text}". 이것을 [${targetLangName}]로 번역하고 한국인이 그대로 소리내어 읽을 수 있는 한글 발음(독음)을 적어주세요. 다음 JSON으로만 답변하세요: {"foreign_text": "외국어 번역 문장", "korean_pron": "한국인이 읽을 수 있는 한글 발음"}`;
+        promptText = `당신은 실시간 회화 프롬프터입니다. 내가 한국어로 말했습니다: "${text}". 이것을 [${targetLangName}]로 번역하고 한국인이 읽을 수 있는 한글 발음(독음)을 적어주세요. 백틱이나 마크다운 없이 순수 JSON 텍스트로만 응답하세요: {"foreign_text": "외국어 번역 문장", "korean_pron": "한국인이 읽을 수 있는 한글 발음"}`;
       }
 
       try {
-        // 공식 표준 gemini-1.5-flash 모델 엔드포인트
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }],
-            generationConfig: { responseMimeType: "application/json" }
-          })
-        });
+        const data = await fetchGeminiWithFallback(promptText, apiKey);
+        let rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawJson) throw new Error("응답 본문이 비어 있습니다.");
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawJson) throw new Error("AI 응답을 생성하지 못했습니다.");
-
+        // 코드블록(```json ... ```) 제거 처리
+        rawJson = rawJson.replace(/```json/g, '').replace(/```/g, '').trim();
         const res = JSON.parse(rawJson);
 
         if (sourceMode === 'partner') {
