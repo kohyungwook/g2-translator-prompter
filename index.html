@@ -110,24 +110,56 @@
     }
 
     async function fetchGemini(promptText, apiKey) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }]
-        })
-      });
+      // 503 과부하 및 할당량 분당 제한 대비 순차 대체 목록
+      const candidateModels = [
+        "gemini-2.5-flash",
+        "gemini-3.8-flash",
+        "gemini-1.5-flash-8b"
+      ];
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+      let lastErr = "";
+
+      for (const model of candidateModels) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+          
+          let res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptText }] }]
+            })
+          });
+
+          // 503(일시 과부하) 또는 429(분당 제한) 발생 시 1.5초 대기 후 1회 재시도
+          if (res.status === 503 || res.status === 429) {
+            await new Promise(r => setTimeout(r, 1500));
+            res = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+              },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }]
+              })
+            });
+          }
+
+          if (res.ok) {
+            return await res.json();
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            lastErr = errJson.error?.message || `HTTP ${res.status}`;
+          }
+        } catch (e) {
+          lastErr = e.message;
+        }
       }
-
-      return await res.json();
+      throw new Error(lastErr || "AI 서버 응답이 일시 지연 중입니다. 잠시 후 다시 시도해주세요.");
     }
 
     async function processTranslation(text, sourceMode, targetLangName) {
