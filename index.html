@@ -55,3 +55,252 @@ cat << 'EOF' > index.html
     </div>
     <div id="status-msg" class="status-text">버튼을 한 번 누르면 녹음 시작, 다시 누르면 번역됩니다.</div>
   </div>
+
+  <div class="card">
+    <label>안경 HUD 렌즈 표시 화면</label>
+    <div id="hud-display" class="hud-box">G2 안경 대기 중...</div>
+  </div>
+
+  <script>
+    let bridge = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let currentMode = null; // 'partner' or 'me'
+    let isRecording = false;
+
+    // Even Bridge 초기화
+    async function initEvenBridge() {
+      const bridgeBadge = document.getElementById('bridge-badge');
+      const findBridge = () => window.EvenAppBridge || window.evenApp || window.even;
+      
+      bridge = findBridge();
+      if (!bridge) {
+        let count = 0;
+        const timer = setInterval(() => {
+          bridge = findBridge();
+          if (bridge) {
+            clearInterval(timer);
+            bridgeBadge.innerText = 'G2 안경 연결됨';
+            bridgeBadge.className = 'badge badge-on';
+          }
+          if (++count > 20) clearInterval(timer);
+        }, 150);
+      } else {
+        bridgeBadge.innerText = 'G2 안경 연결됨';
+        bridgeBadge.className = 'badge badge-on';
+      }
+    }
+
+    // 안경 렌즈로 텍스트 출력
+    async function renderToGlasses(title, bodyText, pronText) {
+      let displayText = `[${title}]\n${bodyText}`;
+      if (pronText) {
+        displayText += `\n--------------------\n▶ 발음: ${pronText}`;
+      }
+
+      const hudBox = document.getElementById('hud-display');
+      if (hudBox) {
+        hudBox.innerHTML = `<b>[${title}]</b>\n${bodyText}` + 
+          (pronText ? `\n--------------------\n<span class="pronunciation-highlight">▶ 한글 발음: ${pronText}</span>` : '');
+      }
+
+      if (bridge) {
+        try {
+          if (typeof bridge.sendStartUpPage === 'function') {
+            await bridge.sendStartUpPage({
+              containers: [{ x: 0, y: 0, width: 576, height: 288, text: displayText }]
+            });
+          } else if (typeof bridge.sendText === 'function') {
+            await bridge.sendText(displayText);
+          }
+        } catch (e) {
+          console.error('안경 전송 실패:', e);
+        }
+      }
+    }
+
+    // Gemini 2.5 Flash를 통한 오디오 직접 분석 및 번역
+    async function processAudioWithGemini(audioBase64, mimeType, mode, targetLangName) {
+      const apiKey = document.getElementById('gemini-key').value.trim();
+      const statusMsg = document.getElementById('status-msg');
+      statusMsg.className = 'status-text';
+      statusMsg.innerText = 'AI 실시간 번역 및 분석 중...';
+
+      let instruction = "";
+      if (mode === 'partner') {
+        instruction = `이 오디오는 상대방이 [${targetLangName}]로 말한 음성입니다. 오디오를 정확히 듣고 다음 JSON 포맷으로만 답변하세요: {"recognized": "원문 문장", "translation": "자연스러운 한국어 번역", "recommended_foreign": "내가 대답할 추천 외국어 답변", "recommended_korean_pron": "추천 답변의 자연스러운 한글 발음(독음)"}`;
+      } else {
+        instruction = `이 오디오는 내가 한국어로 말한 음성입니다. 오디오를 정확히 듣고 [${targetLangName}]로 번역하여 다음 JSON 포맷으로만 답변하세요: {"recognized": "내가 말한 원문", "foreign_text": "외국어 번역 문장", "korean_pron": "한국인이 읽을 수 있는 한글 발음(독음)"}`;
+      }
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+      const payload = {
+        contents: [
+          {
+            parts: [
+              { text: instruction },
+              {
+                inline_data: {
+                  mime_type: mimeType,
+                  data: audioBase64
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          response_mime_type: "application/json"
+        }
+      };
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonText) throw new Error("AI 응답 본문이 비어 있습니다.");
+
+        const result = JSON.parse(jsonText);
+
+        if (mode === 'partner') {
+          const body = `상대: "${result.recognized || ''}"\n뜻: ${result.translation}\n추천: ${result.recommended_foreign}`;
+          renderToGlasses(`${targetLangName} 청취`, body, result.recommended_korean_pron);
+          statusMsg.innerText = `[청취 완료] 추천 응답이 표시되었습니다.`;
+        } else {
+          const body = `내 말: "${result.recognized || ''}"\n${targetLangName}: ${result.foreign_text}`;
+          renderToGlasses(`답변 가이드 (${targetLangName})`, body, result.korean_pron);
+          statusMsg.innerText = `[번역 완료] 안경 화면의 한글 발음을 읽으세요!`;
+        }
+      } catch (e) {
+        console.error('Gemini 번역 실패:', e);
+        statusMsg.className = 'status-text error-text';
+        statusMsg.innerText = `오류: ${e.message}`;
+      }
+    }
+
+    // 음성 녹음 시작 / 종료 토글
+    async function toggleRecording(mode) {
+      const apiKey = document.getElementById('gemini-key').value.trim();
+      const statusMsg = document.getElementById('status-msg');
+      const sttBadge = document.getElementById('stt-badge');
+      const btnPartner = document.getElementById('btn-partner-listen');
+      const btnMe = document.getElementById('btn-me-speak');
+
+      if (!apiKey) {
+        statusMsg.className = 'status-text error-text';
+        statusMsg.innerText = '상단에 Gemini API Key를 먼저 입력해주세요.';
+        return;
+      }
+
+      // 이미 녹음 중이면 정지 후 처리
+      if (isRecording) {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+        }
+        return;
+      }
+
+      // 새로 녹음 시작
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Even Bridge 오디오 채널 오픈 시도 (공식 지원 규격)
+        if (bridge && typeof bridge.audioControl === 'function') {
+          try { bridge.audioControl(true); } catch(e){}
+        }
+
+        audioChunks = [];
+        currentMode = mode;
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/ogg');
+        
+        mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstart = () => {
+          isRecording = true;
+          sttBadge.innerText = '녹음 중...';
+          sttBadge.className = 'badge badge-on';
+          statusMsg.className = 'status-text';
+          statusMsg.innerText = '음성을 듣는 중입니다... 말씀하신 후 버튼을 다시 누르세요.';
+
+          if (mode === 'partner') {
+            btnPartner.classList.add('recording');
+            btnPartner.innerText = '⏹️ 상대방 듣기 종료';
+          } else {
+            btnMe.classList.add('recording');
+            btnMe.innerText = '⏹️ 내 답변 종료';
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          isRecording = false;
+          sttBadge.innerText = '음성 대기';
+          sttBadge.className = 'badge';
+          btnPartner.classList.remove('recording');
+          btnPartner.innerText = '🎤 상대방 듣기';
+          btnMe.classList.remove('recording');
+          btnMe.innerText = '🗣️ 내 답변 말하기';
+
+          // 마이크 트랙 종료
+          stream.getTracks().forEach(track => track.stop());
+          if (bridge && typeof bridge.audioControl === 'function') {
+            try { bridge.audioControl(false); } catch(e){}
+          }
+
+          const audioBlob = new Blob(audioChunks, { type: mimeType });
+          if (audioBlob.size < 500) {
+            statusMsg.innerText = '음성이 감지되지 않았습니다. 다시 녹음해 주세요.';
+            return;
+          }
+
+          // Blob을 Base64로 인코딩
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = () => {
+            const base64Data = reader.result.split(',')[1];
+            const langSelect = document.getElementById('lang-select');
+            const targetLangName = langSelect.options[langSelect.selectedIndex].value;
+            processAudioWithGemini(base64Data, mimeType, currentMode, targetLangName);
+          };
+        };
+
+        mediaRecorder.start();
+      } catch (err) {
+        console.error('마이크 접근 실패:', err);
+        statusMsg.className = 'status-text error-text';
+        statusMsg.innerText = '마이크 권한을 허용해주세요: ' + err.message;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initEvenBridge();
+
+      // API Key 실시간 로컬 영구 저장
+      const keyInput = document.getElementById('gemini-key');
+      const savedKey = localStorage.getItem('g2_gemini_api_key');
+      if (savedKey) keyInput.value = savedKey;
+
+      keyInput.addEventListener('input', () => {
+        localStorage.setItem('g2_gemini_api_key', keyInput.value.trim());
+      });
+
+      document.getElementById('btn-partner-listen').addEventListener('click', () => toggleRecording('partner'));
+      document.getElementById('btn-me-speak').addEventListener('click', () => toggleRecording('me'));
+    });
+  </script>
+</body>
+</html>
+EOF
