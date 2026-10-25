@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Generate Valid Icon
+      - name: Generate Proper Icon
         run: |
           python3 -c "
           import zlib, struct
@@ -25,13 +25,17 @@ jobs:
                   return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
               return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
           with open('icon.png', 'wb') as f:
-              f.write(make_png(128, 128))
+              f.write(make_png(256, 256))
           "
 
-      - name: Build with EvenHub CLI
+      - name: Build Official EHPK
         run: |
           npm install -g @evenrealities/evenhub-cli
-          npx evenhub-cli pack || npx evenhub-cli build || zip -r package.ehpk index.html evenhub.json package.json icon.png
+          # EvenHub CLI로 정석 패키징 시도
+          evenhub build || evenhub pack || npx @evenrealities/evenhub-cli build || npx @evenrealities/evenhub-cli pack || {
+            echo "Direct packing..."
+            zip -q -0 -r com.user.g2translator.ehpk evenhub.json package.json index.html icon.png
+          }
 
       - name: Upload EHPK Artifact
         uses: actions/upload-artifact@v4
