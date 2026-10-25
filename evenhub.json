@@ -1,0 +1,12 @@
+{
+  "name": "g2-translator-prompter",
+  "displayName": "글로벌 프롬프터",
+  "version": "1.0.0",
+  "description": "실시간 다국어 번역 및 한글 발음 프롬프터",
+  "main": "index.html",
+  "category": "utilities",
+  "targets": ["g2"],
+  "permissions": [
+    "voice_recognition"
+  ]
+}
