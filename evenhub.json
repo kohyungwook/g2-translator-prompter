@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "description": "실시간 다국어 번역 및 한글 발음 프롬프터",
   "main": "index.html",
+  "icon": "icon.png",
+  "author": "User",
   "category": "utilities",
   "targets": ["g2"],
   "permissions": [
