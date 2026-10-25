@@ -15,16 +15,31 @@ jobs:
         with:
           node-version: 20
 
-      - name: Create Default Icon
+      - name: Generate Valid Icon
         run: |
-          echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > icon.png
+          # 128x128 크기의 기본 PNG 아이콘 생성
+          python3 -c "
+          import zlib, struct
+          def make_png(w, h):
+              raw = b''.join(b'\x00' + b'\x1e\x90\xff' * w for _ in range(h))
+              def chunk(tag, data):
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+          with open('icon.png', 'wb') as f:
+              f.write(make_png(128, 128))
+          "
 
-      - name: Build EHPK Package
+      - name: Try EvenHub CLI or Pack
         run: |
-          zip -r package.ehpk index.html evenhub.json icon.png
+          npm install -g @evenrealities/evenhub-cli || true
+          if npx evenhub-cli pack; then
+            echo "CLI pack succeeded"
+          else
+            zip -q -r package.ehpk index.html evenhub.json icon.png
+          fi
 
       - name: Upload EHPK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: g2-translator-ehpk
-          path: package.ehpk
+          path: "*.ehpk"
