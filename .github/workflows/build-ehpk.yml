@@ -17,7 +17,6 @@ jobs:
 
       - name: Generate Valid Icon
         run: |
-          # 128x128 크기의 기본 PNG 아이콘 생성
           python3 -c "
           import zlib, struct
           def make_png(w, h):
@@ -29,14 +28,10 @@ jobs:
               f.write(make_png(128, 128))
           "
 
-      - name: Try EvenHub CLI or Pack
+      - name: Build with EvenHub CLI
         run: |
-          npm install -g @evenrealities/evenhub-cli || true
-          if npx evenhub-cli pack; then
-            echo "CLI pack succeeded"
-          else
-            zip -q -r package.ehpk index.html evenhub.json icon.png
-          fi
+          npm install -g @evenrealities/evenhub-cli
+          npx evenhub-cli pack || npx evenhub-cli build || zip -r package.ehpk index.html evenhub.json package.json icon.png
 
       - name: Upload EHPK Artifact
         uses: actions/upload-artifact@v4
