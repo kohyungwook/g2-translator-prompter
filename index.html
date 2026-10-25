@@ -1,9 +1,10 @@
+cat << 'EOF' > index.html
 <!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>G2 다국어 실시간 회화 프롬프터</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>G2 글로벌 회화 프롬프터</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 14px; margin: 0; background: #f8fafc; color: #1e293b; }
     h2 { font-size: 1.2rem; margin-top: 0; margin-bottom: 12px; color: #0f172a; }
@@ -11,9 +12,11 @@
     label { font-size: 0.82rem; font-weight: 700; color: #475569; display: block; margin-bottom: 5px; }
     select, input { width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.92rem; }
     .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-    button { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: 700; font-size: 0.95rem; cursor: pointer; }
+    button { width: 100%; padding: 14px 10px; border: none; border-radius: 6px; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: all 0.2s; }
     .btn-partner { background: #0284c7; color: #ffffff; }
     .btn-me { background: #059669; color: #ffffff; }
+    .recording { background: #dc2626 !important; animation: pulse 1s infinite alternate; }
+    @keyframes pulse { from { opacity: 1; } to { opacity: 0.6; } }
     .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 700; background: #e2e8f0; color: #475569; }
     .badge-on { background: #dcfce7; color: #166534; }
     .hud-box { background: #0f172a; color: #38bdf8; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 0.9rem; line-height: 1.5; min-height: 110px; white-space: pre-wrap; }
@@ -28,20 +31,20 @@
 
   <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-      <span id="bridge-badge" class="badge">스마트폰 단독 모드</span>
+      <span id="bridge-badge" class="badge">스마트폰 모드</span>
       <span id="stt-badge" class="badge">음성 대기</span>
     </div>
-    <label for="gemini-key">Gemini API Key</label>
+    <label for="gemini-key">Gemini API Key (자동 영구 저장)</label>
     <input type="password" id="gemini-key" placeholder="AI Studio API 키 입력" />
     
     <label for="lang-select">대화 상대방 언어 선택</label>
     <select id="lang-select">
-      <option value="ja-JP" data-name="일본어">일본어</option>
-      <option value="zh-CN" data-name="중국어">중국어 (간체)</option>
-      <option value="en-US" data-name="영어">영어</option>
-      <option value="es-ES" data-name="스페인어">스페인어</option>
-      <option value="fr-FR" data-name="프랑스어">프랑스어</option>
-      <option value="vi-VN" data-name="베트남어">베트남어</option>
+      <option value="일본어" data-code="ja">일본어 (Japanese)</option>
+      <option value="중국어" data-code="zh">중국어 (Chinese)</option>
+      <option value="영어" data-code="en">영어 (English)</option>
+      <option value="스페인어" data-code="es">스페인어 (Spanish)</option>
+      <option value="프랑스어" data-code="fr">프랑스어 (French)</option>
+      <option value="베트남어" data-code="vi">베트남어 (Vietnamese)</option>
     </select>
   </div>
 
@@ -50,201 +53,5 @@
       <button id="btn-partner-listen" class="btn-partner">🎤 상대방 듣기</button>
       <button id="btn-me-speak" class="btn-me">🗣️ 내 답변 말하기</button>
     </div>
-    <div id="status-msg" class="status-text">버튼을 눌러 음성 인식을 시작하세요.</div>
+    <div id="status-msg" class="status-text">버튼을 한 번 누르면 녹음 시작, 다시 누르면 번역됩니다.</div>
   </div>
-
-  <div class="card">
-    <label>안경 HUD 렌즈 표시 화면</label>
-    <div id="hud-display" class="hud-box">G2 안경 대기 중...</div>
-  </div>
-
-  <script>
-    let bridge = null;
-    let recognition = null;
-
-    async function initEvenBridge() {
-      const bridgeBadge = document.getElementById('bridge-badge');
-      if (window.EvenAppBridge || window.evenApp) {
-        bridge = window.EvenAppBridge || window.evenApp;
-      } else {
-        bridge = await new Promise((resolve) => {
-          let count = 0;
-          const timer = setInterval(() => {
-            const b = window.EvenAppBridge || window.evenApp;
-            if (b) { clearInterval(timer); resolve(b); }
-            if (++count > 15) { clearInterval(timer); resolve(null); }
-          }, 100);
-        });
-      }
-      if (bridge) {
-        bridgeBadge.innerText = 'G2 안경 연결됨';
-        bridgeBadge.className = 'badge badge-on';
-      }
-    }
-
-    async function renderToGlasses(title, bodyText, pronText) {
-      let displayText = `[${title}]\n${bodyText}`;
-      if (pronText) {
-        displayText += `\n--------------------\n▶ 발음: ${pronText}`;
-      }
-
-      const hudBox = document.getElementById('hud-display');
-      if (hudBox) {
-        hudBox.innerHTML = `<b>[${title}]</b>\n${bodyText}` + 
-          (pronText ? `\n--------------------\n<span class="pronunciation-highlight">▶ 한글 발음: ${pronText}</span>` : '');
-      }
-
-      if (bridge) {
-        try {
-          if (typeof bridge.sendStartUpPage === 'function') {
-            await bridge.sendStartUpPage({
-              containers: [{ x: 0, y: 0, width: 576, height: 288, text: displayText }]
-            });
-          } else if (typeof bridge.sendText === 'function') {
-            await bridge.sendText(displayText);
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-
-    async function fetchGemini(promptText, apiKey) {
-      // 503 과부하 및 할당량 분당 제한 대비 순차 대체 목록
-      const candidateModels = [
-        "gemini-2.5-flash",
-        "gemini-3.8-flash",
-        "gemini-1.5-flash-8b"
-      ];
-
-      let lastErr = "";
-
-      for (const model of candidateModels) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-          
-          let res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: promptText }] }]
-            })
-          });
-
-          // 503(일시 과부하) 또는 429(분당 제한) 발생 시 1.5초 대기 후 1회 재시도
-          if (res.status === 503 || res.status === 429) {
-            await new Promise(r => setTimeout(r, 1500));
-            res = await fetch(url, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': apiKey
-              },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }]
-              })
-            });
-          }
-
-          if (res.ok) {
-            return await res.json();
-          } else {
-            const errJson = await res.json().catch(() => ({}));
-            lastErr = errJson.error?.message || `HTTP ${res.status}`;
-          }
-        } catch (e) {
-          lastErr = e.message;
-        }
-      }
-      throw new Error(lastErr || "AI 서버 응답이 일시 지연 중입니다. 잠시 후 다시 시도해주세요.");
-    }
-
-    async function processTranslation(text, sourceMode, targetLangName) {
-      const apiKey = document.getElementById('gemini-key').value.trim();
-      const statusMsg = document.getElementById('status-msg');
-      statusMsg.className = 'status-text';
-
-      if (!apiKey) {
-        statusMsg.className = 'status-text error-text';
-        statusMsg.innerText = '상단에 Gemini API Key를 입력해주세요.';
-        return;
-      }
-
-      statusMsg.innerText = 'AI 분석 중...';
-
-      let promptText = "";
-      if (sourceMode === 'partner') {
-        promptText = `당신은 스마트글래스 통역기입니다. 상대방이 [${targetLangName}]로 다음과 같이 말했습니다: "${text}". 백틱이나 마크다운 없이 순수 JSON 텍스트로만 응답하세요: {"translation": "한국어 번역", "recommended_foreign": "추천 외국어 답변", "recommended_korean_pron": "추천 답변의 자연스러운 한글 발음(독음)"}`;
-      } else {
-        promptText = `당신은 실시간 회화 프롬프터입니다. 내가 한국어로 말했습니다: "${text}". 이것을 [${targetLangName}]로 번역하고 한국인이 읽을 수 있는 한글 발음(독음)을 적어주세요. 백틱이나 마크다운 없이 순수 JSON 텍스트로만 응답하세요: {"foreign_text": "외국어 번역 문장", "korean_pron": "한국인이 읽을 수 있는 한글 발음"}`;
-      }
-
-      try {
-        const data = await fetchGemini(promptText, apiKey);
-        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawText) throw new Error("AI 응답 본문이 비어 있습니다.");
-
-        rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-        const res = JSON.parse(rawText);
-
-        if (sourceMode === 'partner') {
-          const body = `상대: "${text}"\n뜻: ${res.translation}\n추천: ${res.recommended_foreign}`;
-          renderToGlasses(`${targetLangName} 청취`, body, res.recommended_korean_pron);
-          statusMsg.innerText = `[청취 완료] 추천 응답이 표시되었습니다.`;
-        } else {
-          const body = `내 말: "${text}"\n${targetLangName}: ${res.foreign_text}`;
-          renderToGlasses(`답변 가이드 (${targetLangName})`, body, res.korean_pron);
-          statusMsg.innerText = `[번역 완료] 한글 발음을 보며 소리 내어 말하세요!`;
-        }
-      } catch (e) {
-        console.error('번역 처리 에러:', e);
-        statusMsg.className = 'status-text error-text';
-        statusMsg.innerText = `오류: ${e.message}`;
-      }
-    }
-
-    function startListening(mode) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        alert('Chrome 브라우저에서 실행해주세요.');
-        return;
-      }
-
-      if (recognition) recognition.abort();
-
-      recognition = new SpeechRecognition();
-      const langSelect = document.getElementById('lang-select');
-      const targetLangName = langSelect.options[langSelect.selectedIndex].getAttribute('data-name');
-      recognition.lang = (mode === 'partner') ? langSelect.value : 'ko-KR';
-
-      const statusMsg = document.getElementById('status-msg');
-      recognition.onstart = () => { statusMsg.innerText = '음성을 듣고 있습니다... 말씀하세요!'; };
-      recognition.onresult = (e) => {
-        const spoken = e.results[0][0].transcript;
-        statusMsg.innerText = `인식됨: "${spoken}"`;
-        processTranslation(spoken, mode, targetLangName);
-      };
-      recognition.onerror = () => { statusMsg.innerText = '음성이 인식되지 않았습니다. 다시 눌러주세요.'; };
-      recognition.start();
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      initEvenBridge();
-
-      const savedKey = localStorage.getItem('g2_gemini_api_key');
-      const keyInput = document.getElementById('gemini-key');
-      if (savedKey) keyInput.value = savedKey;
-
-      keyInput.addEventListener('change', () => {
-        localStorage.setItem('g2_gemini_api_key', keyInput.value.trim());
-      });
-
-      document.getElementById('btn-partner-listen').addEventListener('click', () => startListening('partner'));
-      document.getElementById('btn-me-speak').addEventListener('click', () => startListening('me'));
-    });
-  </script>
-</body>
-</html>
